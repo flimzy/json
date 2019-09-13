@@ -4,7 +4,10 @@
 
 package json
 
-import "bytes"
+import (
+	"bytes"
+	"io"
+)
 
 // Compact appends to dst the JSON-encoded src with
 // insignificant space characters elided.
@@ -57,7 +60,7 @@ func compact(dst *bytes.Buffer, src []byte, escape bool) error {
 	return nil
 }
 
-func newline(dst *bytes.Buffer, prefix, indent string, depth int) {
+func newline(dst writer, prefix, indent string, depth int) {
 	dst.WriteByte('\n')
 	dst.WriteString(prefix)
 	for i := 0; i < depth; i++ {
@@ -80,27 +83,68 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 	origLen := dst.Len()
 	var scan scanner
 	scan.reset()
-	needIndent := false
-	depth := 0
+	w := &indentWriter{
+		dst:    dst,
+		prefix: prefix,
+		indent: indent,
+		scan:   &scan,
+	}
+	if _, err := w.Write(src); err != nil {
+		dst.Truncate(origLen)
+		return err
+	}
+	return nil
+}
+
+// IndentWriter wraps w, re-indenting the data written to it, according to
+// prefix and indent. If any parsing error occurs, it will be returned on the
+// next call to Write() on the returned io.Writer.
+func IndentWriter(w io.Writer, prefix, indent string) io.Writer {
+	dst, ok := w.(writer)
+	if !ok {
+		dst = &convertWriter{w}
+	}
+	var scan scanner
+	scan.reset()
+	return &indentWriter{
+		dst:    dst,
+		prefix: prefix,
+		indent: indent,
+		scan:   &scan,
+	}
+}
+
+type indentWriter struct {
+	dst        writer
+	prefix     string
+	indent     string
+	depth      int
+	scan       *scanner
+	needIndent bool
+}
+
+func (w *indentWriter) Write(src []byte) (int, error) {
+	var n int
 	for _, c := range src {
-		scan.bytes++
-		v := scan.step(&scan, c)
+		n++
+		w.scan.bytes++
+		v := w.scan.step(w.scan, c)
 		if v == scanSkipSpace {
 			continue
 		}
 		if v == scanError {
 			break
 		}
-		if needIndent && v != scanEndObject && v != scanEndArray {
-			needIndent = false
-			depth++
-			newline(dst, prefix, indent, depth)
+		if w.needIndent && v != scanEndObject && v != scanEndArray {
+			w.needIndent = false
+			w.depth++
+			newline(w.dst, w.prefix, w.indent, w.depth)
 		}
 
 		// Emit semantically uninteresting bytes
 		// (in particular, punctuation in strings) unmodified.
 		if v == scanContinue {
-			dst.WriteByte(c)
+			w.dst.WriteByte(c)
 			continue
 		}
 
@@ -108,34 +152,33 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 		switch c {
 		case '{', '[':
 			// delay indent so that empty object and array are formatted as {} and [].
-			needIndent = true
-			dst.WriteByte(c)
+			w.needIndent = true
+			w.dst.WriteByte(c)
 
 		case ',':
-			dst.WriteByte(c)
-			newline(dst, prefix, indent, depth)
+			w.dst.WriteByte(c)
+			newline(w.dst, w.prefix, w.indent, w.depth)
 
 		case ':':
-			dst.WriteByte(c)
-			dst.WriteByte(' ')
+			w.dst.WriteByte(c)
+			w.dst.WriteByte(' ')
 
 		case '}', ']':
-			if needIndent {
+			if w.needIndent {
 				// suppress indent in empty object/array
-				needIndent = false
+				w.needIndent = false
 			} else {
-				depth--
-				newline(dst, prefix, indent, depth)
+				w.depth--
+				newline(w.dst, w.prefix, w.indent, w.depth)
 			}
-			dst.WriteByte(c)
+			w.dst.WriteByte(c)
 
 		default:
-			dst.WriteByte(c)
+			w.dst.WriteByte(c)
 		}
 	}
-	if scan.eof() == scanError {
-		dst.Truncate(origLen)
-		return scan.err
+	if w.scan.eof() == scanError {
+		return n, w.scan.err
 	}
-	return nil
+	return n, nil
 }

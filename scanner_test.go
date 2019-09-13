@@ -6,6 +6,7 @@ package json
 
 import (
 	"bytes"
+	"io"
 	"math"
 	"math/rand"
 	"reflect"
@@ -124,6 +125,29 @@ func BenchmarkIndentExample7b(b *testing.B) {
 	benchmarkIndent(strings.Repeat(examples[6].compact, 100), b)
 }
 
+func benchmarkIndentStream(in string, b *testing.B) {
+	b.ReportAllocs()
+	b.SetBytes(int64(len(in)))
+	var buf bytes.Buffer
+	r := &strings.Reader{}
+	for n := 0; n < b.N; n++ {
+		buf.Reset()
+		r.Reset(in)
+		_, _ = io.Copy(IndentWriter(&buf, "", "\t"), r)
+	}
+}
+
+func BenchmarkIndentStreamExample1(b *testing.B) { benchmarkIndentStream(examples[0].compact, b) }
+func BenchmarkIndentStreamExample2(b *testing.B) { benchmarkIndentStream(examples[1].compact, b) }
+func BenchmarkIndentStreamExample3(b *testing.B) { benchmarkIndentStream(examples[2].compact, b) }
+func BenchmarkIndentStreamExample4(b *testing.B) { benchmarkIndentStream(examples[3].compact, b) }
+func BenchmarkIndentStreamExample5(b *testing.B) { benchmarkIndentStream(examples[4].compact, b) }
+func BenchmarkIndentStreamExample6(b *testing.B) { benchmarkIndentStream(examples[5].compact, b) }
+func BenchmarkIndentStreamExample7(b *testing.B) { benchmarkIndentStream(examples[6].compact, b) }
+func BenchmarkIndentStreamExample7b(b *testing.B) {
+	benchmarkIndentStream(strings.Repeat(examples[6].compact, 100), b)
+}
+
 func TestIndent(t *testing.T) {
 	var buf bytes.Buffer
 	for _, tt := range examples {
@@ -142,6 +166,39 @@ func TestIndent(t *testing.T) {
 			t.Errorf("Indent(%#q) = %#q, want %#q", tt.compact, s, tt.indent)
 		}
 	}
+}
+
+func TestStreamIndent(t *testing.T) {
+	var buf bytes.Buffer
+	for _, tt := range examples {
+		buf.Reset()
+		w := IndentWriter(&buf, "", "\t")
+		_, err := io.Copy(w, strings.NewReader(tt.indent))
+		if err != nil {
+			t.Errorf("Indent(%#q): %v", tt.indent, err)
+		} else if s := buf.String(); s != tt.indent {
+			t.Errorf("Indent(%#q) = %#q, want original", tt.indent, s)
+		}
+
+		buf.Reset()
+		w = IndentWriter(&buf, "", "\t")
+		_, err = io.Copy(w, strings.NewReader(tt.compact))
+		if err != nil {
+			t.Errorf("Indent(%#q): %v", tt.compact, err)
+			continue
+		} else if s := buf.String(); s != tt.indent {
+			t.Errorf("Indent(%#q) = %#q, want %#q", tt.compact, s, tt.indent)
+		}
+	}
+
+	t.Run("malformed input", func(t *testing.T) {
+		buf.Reset()
+		w := IndentWriter(&buf, "", "\t")
+		_, err := io.Copy(w, strings.NewReader("bogus json"))
+		if err == nil {
+			t.Error("Expected error, got success")
+		}
+	})
 }
 
 // Tests of a large random structure.
