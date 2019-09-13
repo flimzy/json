@@ -30,6 +30,24 @@ var streamTest = []interface{}{
 	3.14, // another value to make sure something can follow map
 }
 
+func TestEncoderDirectWrite(t *testing.T) {
+	for i := 0; i <= len(streamTest); i++ {
+		var buf bytes.Buffer
+		enc := NewEncoder(&buf)
+		enc.SetDirectWrite(true)
+		for j, v := range streamTest[0:i] {
+			if err := enc.Encode(v); err != nil {
+				t.Fatalf("encode #%d: %v", j, err)
+			}
+		}
+		if have, want := buf.String(), nlines(streamEncoded, i); have != want {
+			t.Errorf("encoding %d items: mismatch", i)
+			diff(t, []byte(have), []byte(want))
+			break
+		}
+	}
+}
+
 var streamEncoded = `0.1
 "hello"
 null
@@ -102,6 +120,20 @@ func (s *strPtrMarshaler) MarshalJSON() ([]byte, error) {
 	return []byte(*s), nil
 }
 
+func TestEncoderIndentDirectWrite(t *testing.T) {
+	var buf bytes.Buffer
+	enc := NewEncoder(&buf)
+	enc.SetIndent(">", ".")
+	enc.SetDirectWrite(true) // direct write should be ignored if indent is specified
+	for _, v := range streamTest {
+		enc.Encode(v)
+	}
+	if have, want := buf.String(), streamEncodedIndent; have != want {
+		t.Error("indented encoding mismatch")
+		diff(t, []byte(have), []byte(want))
+	}
+}
+
 func TestEncoderSetEscapeHTML(t *testing.T) {
 	var c C
 	var ct CText
@@ -163,6 +195,26 @@ func TestEncoderSetEscapeHTML(t *testing.T) {
 		}
 		if got := strings.TrimSpace(buf.String()); got != tt.want {
 			t.Errorf("SetEscapeHTML(false) Encode(%s) = %#q, want %#q",
+				tt.name, got, tt.want)
+		}
+		buf.Reset()
+		enc.SetEscapeHTML(true)
+		enc.SetDirectWrite(true)
+		if err := enc.Encode(tt.v); err != nil {
+			t.Fatalf("SetEscapeHTML(true) SetDirectWrite(true) Encode(%s): %s", tt.name, err)
+		}
+		if got := strings.TrimSpace(buf.String()); got != tt.wantEscape {
+			t.Errorf("SetEscapeHTML(true) SetDirectWrite(true) Encode(%s) = %#q, want %#q",
+				tt.name, got, tt.want)
+		}
+		buf.Reset()
+		enc.SetEscapeHTML(false)
+		enc.SetDirectWrite(true)
+		if err := enc.Encode(tt.v); err != nil {
+			t.Fatalf("SetEscapeHTML(false) SetDirectWrite(true) Encode(%s): %s", tt.name, err)
+		}
+		if got := strings.TrimSpace(buf.String()); got != tt.want {
+			t.Errorf("SetEscapeHTML(false) SetDirectWrite(true) Encode(%s) = %#q, want %#q",
 				tt.name, got, tt.want)
 		}
 	}

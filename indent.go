@@ -12,11 +12,19 @@ import (
 // Compact appends to dst the JSON-encoded src with
 // insignificant space characters elided.
 func Compact(dst *bytes.Buffer, src []byte) error {
-	return compact(dst, src, false)
+	return compactWithRevert(dst, src, false)
 }
 
-func compact(dst *bytes.Buffer, src []byte, escape bool) error {
+func compactWithRevert(dst *bytes.Buffer, src []byte, escape bool) error {
 	origLen := dst.Len()
+	if err := compact(dst, src, escape); err != nil {
+		dst.Truncate(origLen)
+		return err
+	}
+	return nil
+}
+
+func compact(dst writer, src []byte, escape bool) error {
 	var scan scanner
 	scan.reset()
 	start := 0
@@ -51,7 +59,6 @@ func compact(dst *bytes.Buffer, src []byte, escape bool) error {
 		}
 	}
 	if scan.eof() == scanError {
-		dst.Truncate(origLen)
 		return scan.err
 	}
 	if start < len(src) {
