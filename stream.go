@@ -509,3 +509,21 @@ func (dec *Decoder) peek() (byte, error) {
 func (dec *Decoder) offset() int64 {
 	return dec.scanned + int64(dec.scanp)
 }
+
+type writer interface {
+	Write([]byte) (int, error)
+	WriteString(string) (int, error)
+	WriteByte(byte) error
+}
+
+type convertWriter struct {
+	io.Writer
+}
+
+func (c convertWriter) WriteString(s string) (int, error) {
+	return io.WriteString(c.Writer, s)
+}
+func (c convertWriter) WriteByte(b byte) error {
+	_, err := c.Write([]byte{b})
+	return err
+}
