@@ -31,20 +31,34 @@ func compact(dst writer, src []byte, escape bool) error {
 	for i, c := range src {
 		if escape && (c == '<' || c == '>' || c == '&') {
 			if start < i {
-				dst.Write(src[start:i])
+				if _, err := dst.Write(src[start:i]); err != nil {
+					return err
+				}
 			}
-			dst.WriteString(`\u00`)
-			dst.WriteByte(hex[c>>4])
-			dst.WriteByte(hex[c&0xF])
+			if _, err := dst.WriteString(`\u00`); err != nil {
+				return err
+			}
+			if err := dst.WriteByte(hex[c>>4]); err != nil {
+				return err
+			}
+			if err := dst.WriteByte(hex[c&0xF]); err != nil {
+				return err
+			}
 			start = i + 1
 		}
 		// Convert U+2028 and U+2029 (E2 80 A8 and E2 80 A9).
 		if c == 0xE2 && i+2 < len(src) && src[i+1] == 0x80 && src[i+2]&^1 == 0xA8 {
 			if start < i {
-				dst.Write(src[start:i])
+				if _, err := dst.Write(src[start:i]); err != nil {
+					return err
+				}
 			}
-			dst.WriteString(`\u202`)
-			dst.WriteByte(hex[src[i+2]&0xF])
+			if _, err := dst.WriteString(`\u202`); err != nil {
+				return err
+			}
+			if err := dst.WriteByte(hex[src[i+2]&0xF]); err != nil {
+				return err
+			}
 			start = i + 3
 		}
 		v := scan.step(&scan, c)
@@ -53,7 +67,9 @@ func compact(dst writer, src []byte, escape bool) error {
 				break
 			}
 			if start < i {
-				dst.Write(src[start:i])
+				if _, err := dst.Write(src[start:i]); err != nil {
+					return err
+				}
 			}
 			start = i + 1
 		}
@@ -62,17 +78,26 @@ func compact(dst writer, src []byte, escape bool) error {
 		return scan.err
 	}
 	if start < len(src) {
-		dst.Write(src[start:])
+		if _, err := dst.Write(src[start:]); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func newline(dst writer, prefix, indent string, depth int) {
-	dst.WriteByte('\n')
-	dst.WriteString(prefix)
-	for i := 0; i < depth; i++ {
-		dst.WriteString(indent)
+func newline(dst writer, prefix, indent string, depth int) error {
+	if err := dst.WriteByte('\n'); err != nil {
+		return err
 	}
+	if _, err := dst.WriteString(prefix); err != nil {
+		return err
+	}
+	for i := 0; i < depth; i++ {
+		if _, err := dst.WriteString(indent); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Indent appends to dst an indented form of the JSON-encoded src.
@@ -145,13 +170,17 @@ func (w *indentWriter) Write(src []byte) (int, error) {
 		if w.needIndent && v != scanEndObject && v != scanEndArray {
 			w.needIndent = false
 			w.depth++
-			newline(w.dst, w.prefix, w.indent, w.depth)
+			if err := newline(w.dst, w.prefix, w.indent, w.depth); err != nil {
+				return n, err
+			}
 		}
 
 		// Emit semantically uninteresting bytes
 		// (in particular, punctuation in strings) unmodified.
 		if v == scanContinue {
-			w.dst.WriteByte(c)
+			if err := w.dst.WriteByte(c); err != nil {
+				return n, err
+			}
 			continue
 		}
 
@@ -160,15 +189,25 @@ func (w *indentWriter) Write(src []byte) (int, error) {
 		case '{', '[':
 			// delay indent so that empty object and array are formatted as {} and [].
 			w.needIndent = true
-			w.dst.WriteByte(c)
+			if err := w.dst.WriteByte(c); err != nil {
+				return n, err
+			}
 
 		case ',':
-			w.dst.WriteByte(c)
-			newline(w.dst, w.prefix, w.indent, w.depth)
+			if err := w.dst.WriteByte(c); err != nil {
+				return n, err
+			}
+			if err := newline(w.dst, w.prefix, w.indent, w.depth); err != nil {
+				return n, err
+			}
 
 		case ':':
-			w.dst.WriteByte(c)
-			w.dst.WriteByte(' ')
+			if err := w.dst.WriteByte(c); err != nil {
+				return n, err
+			}
+			if err := w.dst.WriteByte(' '); err != nil {
+				return n, err
+			}
 
 		case '}', ']':
 			if w.needIndent {
@@ -176,12 +215,18 @@ func (w *indentWriter) Write(src []byte) (int, error) {
 				w.needIndent = false
 			} else {
 				w.depth--
-				newline(w.dst, w.prefix, w.indent, w.depth)
+				if err := newline(w.dst, w.prefix, w.indent, w.depth); err != nil {
+					return n, err
+				}
 			}
-			w.dst.WriteByte(c)
+			if err := w.dst.WriteByte(c); err != nil {
+				return n, err
+			}
 
 		default:
-			w.dst.WriteByte(c)
+			if err := w.dst.WriteByte(c); err != nil {
+				return n, err
+			}
 		}
 	}
 	if w.scan.eof() == scanError {
