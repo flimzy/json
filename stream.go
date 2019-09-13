@@ -179,9 +179,10 @@ func nonSpace(b []byte) bool {
 
 // An Encoder writes JSON values to an output stream.
 type Encoder struct {
-	w          io.Writer
-	err        error
-	escapeHTML bool
+	w           io.Writer
+	err         error
+	escapeHTML  bool
+	directWrite bool
 
 	indentBuf    *bytes.Buffer
 	indentPrefix string
@@ -202,6 +203,29 @@ func (enc *Encoder) Encode(v interface{}) error {
 	if enc.err != nil {
 		return enc.err
 	}
+
+	if enc.directWrite && enc.indentPrefix == "" && enc.indentValue == "" {
+		e := new(encodeState)
+
+		// If underlying writer supports the required methods then use it
+		if t, ok := enc.w.(writer); ok {
+			e.writer = t
+		} else {
+			e.writer = convertWriter{enc.w}
+		}
+
+		err := e.marshal(v, encOpts{escapeHTML: enc.escapeHTML})
+		if err != nil {
+			return err
+		}
+		if err := e.WriteByte('\n'); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	// Create an encode state backed by a growable bytes.Buffer
 	e := newEncodeState()
 	err := e.marshal(v, encOpts{escapeHTML: enc.escapeHTML})
 	if err != nil {
@@ -216,7 +240,7 @@ func (enc *Encoder) Encode(v interface{}) error {
 	// digits coming.
 	e.WriteByte('\n')
 
-	b := e.Bytes()
+	b := e.writer.(*bytes.Buffer).Bytes()
 	if enc.indentPrefix != "" || enc.indentValue != "" {
 		if enc.indentBuf == nil {
 			enc.indentBuf = new(bytes.Buffer)
@@ -231,6 +255,7 @@ func (enc *Encoder) Encode(v interface{}) error {
 	if _, err = enc.w.Write(b); err != nil {
 		enc.err = err
 	}
+	e.writer.(*bytes.Buffer).Reset()
 	encodeStatePool.Put(e)
 	return err
 }
@@ -258,6 +283,17 @@ func (enc *Encoder) SetEscapeHTML(on bool) {
 // It implements Marshaler and Unmarshaler and can
 // be used to delay JSON decoding or precompute a JSON encoding.
 type RawMessage []byte
+
+// SetDirectWrite specifies whether the encoder can periodically flush output
+// to the underlying writer as available. Otherwise, the encoder buffers the
+// entire output and only performs a single write to the underlying writer if
+// there is no encoding error. Internal buffering is the default behavior.
+
+// Calling SetDirectWrite(true) may result in partial and invalid encodings
+// being written if an error is encountered.
+func (enc *Encoder) SetDirectWrite(on bool) {
+	enc.directWrite = on
+}
 
 // MarshalJSON returns m as the JSON encoding of m.
 func (m RawMessage) MarshalJSON() ([]byte, error) {

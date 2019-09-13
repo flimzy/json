@@ -156,13 +156,15 @@ import (
 // an infinite recursion.
 //
 func Marshal(v interface{}) ([]byte, error) {
+	// Create an encode state backed by a growable bytes.Buffer
 	e := newEncodeState()
 
 	err := e.marshal(v, encOpts{escapeHTML: true})
 	if err != nil {
 		return nil, err
 	}
-	buf := append([]byte(nil), e.Bytes()...)
+	buf := append([]byte(nil), e.writer.(*bytes.Buffer).Bytes()...)
+	e.writer.(*bytes.Buffer).Reset()
 
 	encodeStatePool.Put(e)
 
@@ -275,19 +277,18 @@ var hex = "0123456789abcdef"
 
 // An encodeState encodes JSON into a bytes.Buffer.
 type encodeState struct {
-	bytes.Buffer // accumulated output
-	scratch      [64]byte
+	writer  // accumulated output
+	scratch [64]byte
 }
 
+// encodeStatePool is only used for encode states where buffer is a *bytes.Buffer
 var encodeStatePool sync.Pool
 
 func newEncodeState() *encodeState {
 	if v := encodeStatePool.Get(); v != nil {
-		e := v.(*encodeState)
-		e.Reset()
-		return e
+		return v.(*encodeState)
 	}
-	return new(encodeState)
+	return &encodeState{writer: new(bytes.Buffer)}
 }
 
 // jsonError is an error wrapper type for internal use only.
@@ -452,7 +453,11 @@ func marshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 	b, err := m.MarshalJSON()
 	if err == nil {
 		// copy JSON into buffer, checking validity.
-		err = compact(&e.Buffer, b, opts.escapeHTML)
+		if bb, ok := e.writer.(*bytes.Buffer); ok {
+			err = compactWithRevert(bb, b, opts.escapeHTML)
+		} else {
+			err = compact(e, b, opts.escapeHTML)
+		}
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})
@@ -469,7 +474,11 @@ func addrMarshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 	b, err := m.MarshalJSON()
 	if err == nil {
 		// copy JSON into buffer, checking validity.
-		err = compact(&e.Buffer, b, opts.escapeHTML)
+		if bb, ok := e.writer.(*bytes.Buffer); ok {
+			err = compactWithRevert(bb, b, opts.escapeHTML)
+		} else {
+			err = compact(e, b, opts.escapeHTML)
+		}
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})
